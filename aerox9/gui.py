@@ -1,5 +1,6 @@
 """GTK4 / libadwaita GUI."""
 
+import os
 import queue
 import threading
 from importlib import resources
@@ -8,7 +9,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 from . import protocol, settings  # noqa: E402
 from .device import DeviceError, Mouse  # noqa: E402
@@ -16,6 +17,8 @@ from .widgets import ColorPicker, MouseDiagram  # noqa: E402
 
 APP_ID = "io.github.aerox9"
 DEBOUNCE_MS = 300
+POLL_S = 5  # battery / charging poll interval
+HOTPLUG_SETTLE_MS = 1000
 
 
 class DeviceWorker:
@@ -24,25 +27,36 @@ class DeviceWorker:
     def __init__(self, on_status):
         self._q = queue.Queue()
         self._mouse = None
-        self._on_status = on_status  # called on the main loop: (name or None, error or None)
+        # called on the main loop: ((name, wireless) or None, error or None)
+        self._on_status = on_status
         threading.Thread(target=self._run, daemon=True).start()
 
     def submit(self, job, on_done=None):
         """job(mouse) runs on the worker; on_done(result) runs on the main loop."""
         self._q.put((job, on_done))
 
+    def reset(self):
+        """Close the device so the next job re-discovers it (e.g. after a hotplug)."""
+        self._q.put((None, None))
+
+    def _close(self):
+        if self._mouse:
+            self._mouse.close()
+        self._mouse = None
+
     def _run(self):
         while True:
             job, on_done = self._q.get()
+            if job is None:
+                self._close()
+                continue
             try:
                 if self._mouse is None:
                     self._mouse = Mouse.open()
-                    GLib.idle_add(self._on_status, self._mouse.name, None)
+                    GLib.idle_add(self._on_status, (self._mouse.name, self._mouse.wireless), None)
                 result = job(self._mouse)
             except DeviceError as e:
-                if self._mouse:
-                    self._mouse.close()
-                self._mouse = None
+                self._close()
                 GLib.idle_add(self._on_status, None, str(e))
                 continue
             if on_done:
@@ -104,6 +118,24 @@ def action_short(action):
 
 # --- small builders ----------------------------------------------------------
 
+_icons_registered = False
+
+
+def _register_icons():
+    """Make the bundled aerox9-*-symbolic icons findable, independent of the system icon theme.
+
+    Running from source: the package's icons/ folder is added to the search path.
+    Installed zipapp: `make install` puts them in ~/.local/share/icons/hicolor, which GTK always searches.
+    """
+    global _icons_registered
+    if _icons_registered:
+        return
+    _icons_registered = True
+    icons = resources.files(__package__) / "icons"
+    if isinstance(icons, os.PathLike) and os.path.isdir(icons):
+        Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(os.fspath(icons))
+
+
 def _label(text, *classes, **kw):
     kw.setdefault("xalign", 0)
     return Gtk.Label(label=text, css_classes=list(classes), **kw)
@@ -140,16 +172,17 @@ def _page(child):
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Aerox 9", default_width=1240, default_height=800)
+        _register_icons()
         self.data = settings.load()
         self._pending = {}
         self.worker = DeviceWorker(self._on_device_status)
 
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=150)
         pages = [
-            ("buttons", "Buttons", "input-mouse-symbolic", self._buttons_page()),
-            ("performance", "Performance", "power-profile-performance-symbolic", self._performance_page()),
-            ("lighting", "Illumination", "display-brightness-symbolic", self._lighting_page()),
-            ("power", "Power", "battery-full-symbolic", self._power_page()),
+            ("buttons", "Buttons", "aerox9-buttons-symbolic", self._buttons_page()),
+            ("dpi", "DPI", "aerox9-dpi-symbolic", self._performance_page()),
+            ("lighting", "Illumination", "aerox9-lighting-symbolic", self._lighting_page()),
+            ("power", "Power", "aerox9-power-symbolic", self._power_page()),
         ]
         for name, _title, _icon, widget in pages:
             self.stack.add_named(widget, name)
@@ -168,8 +201,9 @@ class Window(Adw.ApplicationWindow):
         self.set_content(self.toasts)
 
         self.nav["buttons"].set_active(True)
+        self._watch_hotplug()
         self._probe()
-        GLib.timeout_add_seconds(60, self._probe)
+        GLib.timeout_add_seconds(POLL_S, self._probe)
 
     # --- sidebar ------------------------------------------------------------
 
@@ -178,8 +212,12 @@ class Window(Adw.ApplicationWindow):
                       margin_end=14, margin_bottom=16)
         box.append(_label("AEROX 9", "brand", margin_top=4))
         box.append(_label("WIRELESS", "brand-sub"))
-        self.status_lbl = _label("● Searching…", "status", margin_top=10)
-        box.append(self.status_lbl)
+        conn_row = Gtk.Box(spacing=8, margin_top=10)
+        self.conn_icon = Gtk.Image(icon_name="aerox9-offline-symbolic", css_classes=["status"])
+        self.status_lbl = _label("Searching…", "status")
+        conn_row.append(self.conn_icon)
+        conn_row.append(self.status_lbl)
+        box.append(conn_row)
         batt_row = Gtk.Box(spacing=8, margin_bottom=18)
         self.side_batt_bar = Gtk.LevelBar(min_value=0, max_value=100, hexpand=True,
                                           valign=Gtk.Align.CENTER, css_classes=["battery"])
@@ -224,38 +262,98 @@ class Window(Adw.ApplicationWindow):
 
     # --- device plumbing ----------------------------------------------------
 
-    def _on_device_status(self, name, error):
-        if name:
-            self.banner.set_revealed(False)
-            mode = "2.4 GHz" if "2.4" in name else "Wired"
-            self.status_lbl.set_label(f"● Connected · {mode}")
-            self.status_lbl.add_css_class("online")
-        else:
-            self.banner.set_title(error or "Mouse not connected")
-            self.banner.set_revealed(True)
-            self.status_lbl.set_label("○ Not connected")
-            self.status_lbl.remove_css_class("online")
-            self._show_battery(None)
+    def _watch_hotplug(self):
+        """Re-detect the mouse when hidraw nodes appear/disappear (cable or dongle plugged/unplugged)."""
+        self._conn = None
+        self._batt = None
+        self._error = None
+        self._hotplug_src = None
+        self._dev_monitor = Gio.File.new_for_path("/dev").monitor_directory(Gio.FileMonitorFlags.NONE, None)
+
+        def fire():
+            self._hotplug_src = None
+            self.worker.reset()
+            self._probe()
+            return False
+
+        def on_changed(_m, file, _other, event):
+            if not file.get_basename().startswith("hidraw"):
+                return
+            if event not in (Gio.FileMonitorEvent.CREATED, Gio.FileMonitorEvent.DELETED):
+                return
+            if self._hotplug_src:
+                GLib.source_remove(self._hotplug_src)
+            # udev needs a moment to apply permissions to new nodes
+            self._hotplug_src = GLib.timeout_add(HOTPLUG_SETTLE_MS, fire)
+
+        self._dev_monitor.connect("changed", on_changed)
+
+    def _on_device_status(self, conn, error):
+        if conn != self._conn:
+            if conn and self._conn:
+                self._toast("Switched to " + ("2.4 GHz wireless" if conn[1] else "wired"))
+            elif self._conn and not conn:
+                self._toast("Mouse disconnected")
+        self._conn = conn
+        self._error = error
+        if conn is None:
+            self._batt = None
+        self._render_status()
 
     def _probe(self):
         self.worker.submit(lambda m: m.battery(), self._show_battery)
         return True
 
     def _show_battery(self, batt):
+        if batt and self._batt and batt[1] != self._batt[1]:
+            self._toast("Charging" if batt[1] else "Unplugged · on battery")
+        self._batt = batt
+        self._render_status()
+
+    def _render_status(self):
+        conn, batt = self._conn, self._batt
+        wireless = bool(conn and conn[1])
+        asleep = wireless and batt is None
+        charging = bool(batt and batt[1])
+
+        # connection line
+        if conn is None:
+            icon, text, state = "aerox9-offline-symbolic", "Not connected", "offline"
+        elif wireless:
+            icon = "aerox9-wireless-asleep-symbolic" if asleep else "aerox9-wireless-symbolic"
+            text = "2.4 GHz · mouse asleep / off" if asleep else "2.4 GHz wireless"
+            state = "idle" if asleep else "online"
+        else:
+            icon, text, state = "aerox9-wired-symbolic", "Wired", "online"
+        self.conn_icon.set_from_icon_name(icon)
+        self.status_lbl.set_label(text)
+        for w in (self.conn_icon, self.status_lbl):
+            w.set_css_classes(["status", state])
+        self.banner.set_title(self._error or "Mouse not connected")
+        self.banner.set_revealed(conn is None)
+
+        # battery
         if batt is None:
-            self.side_batt_bar.set_value(0)
             self.side_batt_lbl.set_label("—")
             self.batt_big.set_label("—")
-            self.batt_state.set_label("Unavailable (mouse off or asleep?)")
-            self.batt_bar.set_value(0)
+            self.batt_state.set_label("Mouse asleep or off" if asleep else "Unavailable")
+            for bar in (self.side_batt_bar, self.batt_bar):
+                bar.set_value(0)
             return
-        level, charging = batt
+        level = batt[0]
+        cls = "charging" if charging else ("low" if level <= 15 else None)
+        for w in (self.side_batt_lbl, self.batt_big):
+            w.set_css_classes([c for c in ("status" if w is not self.batt_big else "big-number", cls) if c])
         for bar in (self.side_batt_bar, self.batt_bar):
             bar.set_value(level)
-            (bar.add_css_class if level <= 15 else bar.remove_css_class)("low")
+            (bar.add_css_class if level <= 15 and not charging else bar.remove_css_class)("low")
         self.side_batt_lbl.set_label(f"{level}%" + (" ⚡" if charging else ""))
         self.batt_big.set_label(f"{level}%")
-        self.batt_state.set_label("Charging" if charging else "On battery")
+        if charging:
+            state = "Charging via cable" if not wireless else "Charging"
+        else:
+            state = "On battery"
+        self.batt_state.set_label(state)
 
     def _changed(self, section, debounce=False):
         """Persist settings and push `section` to the mouse."""
@@ -415,7 +513,7 @@ class Window(Adw.ApplicationWindow):
             box = Gtk.Box(spacing=8)
             box.append(_label(action_label(action), hexpand=True))
             if action == current:
-                box.append(Gtk.Image(icon_name="object-select-symbolic", css_classes=["accent"]))
+                box.append(Gtk.Image(icon_name="aerox9-check-symbolic", css_classes=["accent"]))
             row = Gtk.ListBoxRow(child=box)
             row.action = action
             self.opt_list.append(row)
@@ -455,10 +553,10 @@ class Window(Adw.ApplicationWindow):
         top = Gtk.Box(spacing=10)
         self.stage_box = Gtk.Box(spacing=10, hexpand=True)
         top.append(self.stage_box)
-        self.add_stage = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER,
+        self.add_stage = Gtk.Button(icon_name="aerox9-add-symbolic", valign=Gtk.Align.CENTER,
                                     css_classes=["circular"], tooltip_text="Add stage")
         self.add_stage.connect("clicked", self._on_add_stage)
-        self.del_stage = Gtk.Button(icon_name="list-remove-symbolic", valign=Gtk.Align.CENTER,
+        self.del_stage = Gtk.Button(icon_name="aerox9-remove-symbolic", valign=Gtk.Align.CENTER,
                                     css_classes=["circular"], tooltip_text="Remove selected stage")
         self.del_stage.connect("clicked", self._on_del_stage)
         top.append(self.del_stage)
@@ -674,7 +772,7 @@ class Window(Adw.ApplicationWindow):
         row.append(self.batt_big)
         self.batt_state = _label("", "binding", hexpand=True, valign=Gtk.Align.CENTER)
         row.append(self.batt_state)
-        refresh = Gtk.Button(icon_name="view-refresh-symbolic", valign=Gtk.Align.CENTER,
+        refresh = Gtk.Button(icon_name="aerox9-refresh-symbolic", valign=Gtk.Align.CENTER,
                              css_classes=["circular"], tooltip_text="Refresh")
         refresh.connect("clicked", lambda *_: self._probe())
         row.append(refresh)

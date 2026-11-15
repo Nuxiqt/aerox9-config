@@ -78,3 +78,8 @@ levelbar.battery block { min-height: 8px; border-radius: 4px; }
 levelbar.battery block.empty { background: transparent; }
 levelbar.battery block.filled { background: #4cd964; }
 levelbar.battery block.filled.low { background: #ff3b30; }
+
+.status.idle { color: #ffcc00; }
+.status.offline { color: #ff6b5f; }
+.status.charging, .big-number.charging { color: #4cd964; }
+.status.low, .big-number.low { color: #ff3b30; }

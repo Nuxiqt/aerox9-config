@@ -51,9 +51,11 @@ class Mouse:
 
     @classmethod
     def open(cls):
-        for path, pid in find_devices():
-            return cls(path, pid)
-        raise DeviceError("Aerox 9 Wireless not found")
+        """Opens the mouse, preferring the cable over the dongle when both are present."""
+        devices = sorted(find_devices(), key=lambda d: PRODUCTS[d[1]][1])
+        if not devices:
+            raise DeviceError("Aerox 9 Wireless not found")
+        return cls(*devices[0])
 
     def close(self):
         if self._fd is not None:
@@ -79,12 +81,12 @@ class Mouse:
         cmd = list(cmd)
         if self.wireless:
             cmd[0] |= protocol.WIRELESS_FLAG
-        self._drain()
         try:
+            self._drain()
             os.write(self._fd, bytes([0x00] + cmd))
-        except OSError as e:
-            raise DeviceError(f"write failed: {e.strerror}") from e
-        reply = self._read() if (expect_reply or self.wireless) else None
+            reply = self._read() if (expect_reply or self.wireless) else None
+        except OSError as e:  # e.g. ENODEV after unplugging
+            raise DeviceError(f"mouse disconnected ({e.strerror})") from e
         time.sleep(COMMAND_DELAY)
         return reply
 

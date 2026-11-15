@@ -17,10 +17,10 @@ Click a button on the mouse or the side keypad, then pick a mouse action, keyboa
 
 ![Buttons tab](docs/screenshots/buttons.png)
 
-### Performance
+### DPI
 Up to 5 DPI stages (100–18000) and polling rate.
 
-![Performance tab](docs/screenshots/performance.png)
+![DPI tab](docs/screenshots/dpi.png)
 
 ### Illumination
 Static colors for the three LED zones or the rainbow effect, reactive click color and power-on lighting.
@@ -53,7 +53,7 @@ On distros without systemd/logind (e.g. Void, Alpine, Gentoo with OpenRC) add th
 
 ## Install
 
-    make install      # single-file executable -> ~/.local/bin/aerox9 + app-menu entry
+    make install      # single-file executable -> ~/.local/bin/aerox9
     make uninstall
 
 `aerox9` takes the same subcommands as below.
