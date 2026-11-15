@@ -3,6 +3,7 @@
 import os
 import queue
 import threading
+import time
 from importlib import resources
 
 import gi
@@ -308,6 +309,8 @@ class Window(Adw.ApplicationWindow):
         if batt and self._batt and batt[1] != self._batt[1]:
             self._toast("Charging" if batt[1] else "Unplugged · on battery")
         self._batt = batt
+        stamp = time.strftime("%H:%M:%S")
+        self.batt_updated.set_label(f"Updated {stamp}" if batt else f"Checked {stamp} · no reply")
         self._render_status()
 
     def _render_status(self):
@@ -770,8 +773,12 @@ class Window(Adw.ApplicationWindow):
         row = Gtk.Box(spacing=16)
         self.batt_big = _label("—", "big-number")
         row.append(self.batt_big)
-        self.batt_state = _label("", "binding", hexpand=True, valign=Gtk.Align.CENTER)
-        row.append(self.batt_state)
+        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
+        self.batt_state = _label("", "binding")
+        self.batt_updated = _label("", "binding")
+        info.append(self.batt_state)
+        info.append(self.batt_updated)
+        row.append(info)
         refresh = Gtk.Button(icon_name="aerox9-refresh-symbolic", valign=Gtk.Align.CENTER,
                              css_classes=["circular"], tooltip_text="Refresh")
         refresh.connect("clicked", lambda *_: self._probe())
