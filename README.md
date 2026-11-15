@@ -34,7 +34,7 @@ Battery level, sleep timer and LED dim timer.
 
 ## Compatibility
 
-Developed and tested only on **Arch Linux** (GTK 4.24, libadwaita 1.10, Python 3.14).
+Developed and tested only on **Arch Linux** + **KDE Plasma** (GTK 4.24, libadwaita 1.10, Python 3.14).
 Other distros are untested, but it should work on any Linux distro that has:
 
 | Requirement | Minimum | Why |
