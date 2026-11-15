@@ -1,0 +1,80 @@
+:root {
+  --accent-bg-color: #ff5a1f;
+  --accent-fg-color: #ffffff;
+  --accent-color: #ff7a45;
+  --window-bg-color: #0d0e10;
+  --view-bg-color: #0d0e10;
+  --headerbar-bg-color: #0d0e10;
+  --headerbar-shade-color: transparent;
+  --sidebar-bg-color: #15171a;
+  --card-bg-color: #17191c;
+  --popover-bg-color: #1d2024;
+}
+
+.sidebar-pane { background: #15171a; }
+.brand { font-size: 26px; font-weight: 900; letter-spacing: 3px; }
+.brand-sub { color: #8a8f98; font-size: 12px; letter-spacing: 2px; }
+.status { font-size: 12px; color: #8a8f98; }
+.status.online { color: #4cd964; }
+
+.nav-button {
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #b8bcc4;
+}
+.nav-button:checked {
+  background: rgba(255, 90, 31, 0.16);
+  color: #ff7a45;
+  box-shadow: inset 3px 0 0 #ff5a1f;
+}
+
+.panel {
+  background: #17191c;
+  border: 1px solid #23262b;
+  border-radius: 14px;
+  padding: 18px;
+}
+.section-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #8a8f98;
+}
+.panel-title { font-size: 20px; font-weight: 800; }
+.big-number { font-size: 44px; font-weight: 900; }
+.unit { font-size: 16px; font-weight: 700; color: #8a8f98; }
+
+.dpi-stage {
+  min-width: 92px;
+  padding: 10px 6px;
+  border-radius: 12px;
+  background: #1f2226;
+  border: 2px solid transparent;
+}
+.dpi-stage:checked { border-color: #ff5a1f; background: rgba(255, 90, 31, 0.10); }
+.stage-value { font-size: 20px; font-weight: 900; }
+.stage-tag { font-size: 9px; font-weight: 800; letter-spacing: 1px; color: #ff7a45; }
+
+.segmented > button { padding: 8px 14px; font-weight: 700; }
+.segmented > button:checked { background: #ff5a1f; color: white; }
+
+.bind-list, .option-list { background: transparent; }
+.bind-list row, .option-list row { border-radius: 8px; padding: 6px 10px; margin: 1px 0; }
+.bind-list row:selected { background: rgba(255, 90, 31, 0.16); }
+.bind-name { font-weight: 700; }
+.binding { font-size: 12px; color: #8a8f98; }
+.binding.changed { color: #ff7a45; }
+
+.apply-bar {
+  background: #1d2024;
+  border-top: 1px solid #2a2e33;
+  padding: 10px 18px;
+}
+
+levelbar.battery trough { min-height: 8px; background: #2a2e33; border-radius: 4px; padding: 0; }
+levelbar.battery block { min-height: 8px; border-radius: 4px; }
+levelbar.battery block.empty { background: transparent; }
+levelbar.battery block.filled { background: #4cd964; }
+levelbar.battery block.filled.low { background: #ff3b30; }
