@@ -73,8 +73,18 @@ On distros without systemd/logind (e.g. Void, Alpine, Gentoo with OpenRC) add th
 - Changes are volatile until you press **Save to mouse** (writes flash).
 - Button mapping is **experimental**, from the unmerged rivalcfg PR #243, and only sent when you press Apply
   on the Buttons tab. If something goes wrong, Reset → Apply, or unplug/replug (unsaved changes are lost).
-- hidraw access relies on the logind `uaccess` ACL. If you get "permission denied", add a udev rule:
-  `KERNEL=="hidraw*", ATTRS{idVendor}=="1038", TAG+="uaccess"`.
+- hidraw access relies on the logind `uaccess` ACL. If you get "permission denied", add a udev rule
+  in a file whose number is **below 73**, e.g. `/etc/udev/rules.d/70-aerox9.rules`:
+
+      KERNEL=="hidraw*", ATTRS{idVendor}=="1038", TAG+="uaccess"
+
+  The ACL is applied by systemd's `73-seat-late.rules`, which only acts on devices already tagged
+  `uaccess`. A file such as `99-*.rules` runs too late: the tag is set but no ACL is granted.
+  Then reload and re-trigger (no replug or re-login needed):
+
+      sudo udevadm control --reload
+      sudo udevadm trigger --subsystem-match=hidraw
+      getfacl /dev/hidraw*    # should list user:<you>:rw- for the mouse nodes
 
 ## Credits
 
