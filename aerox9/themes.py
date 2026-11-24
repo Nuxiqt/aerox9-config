@@ -2,6 +2,8 @@
 
 from string import Template
 
+from .helper import hex_to_rgb, mix
+
 DEFAULT = "dark"
 SYSTEM = "system"  # follows the desktop's light/dark preference and accent color
 
@@ -105,25 +107,12 @@ def resolve(name, dark=True, accent=None):
     if accent:
         theme["accent"] = accent
         # accent as text: lighter on dark backgrounds, darker on light ones, for contrast
-        theme["accent_text"] = _mix(accent, "#ffffff" if dark else "#000000", 0.25)
+        theme["accent_text"] = mix(accent, "#ffffff" if dark else "#000000", 0.25)
     return theme
-
-
-def _mix(a, b, t):
-    return "#%02x%02x%02x" % tuple(round(x + (y - x) * t) for x, y in zip(rgb(a), rgb(b)))
-
-
-def rgb(color):
-    color = color.lstrip("#")
-    return tuple(int(color[i:i + 2], 16) for i in (0, 2, 4))
-
-
-def rgbf(color):
-    return tuple(c / 255 for c in rgb(color))
 
 
 def css(template, t):
     """Fill style.css's placeholders from palette `t` (a THEMES entry or resolve() result)."""
     tokens = {k: v for k, v in t.items() if isinstance(v, str)}
-    tokens["accent_rgb"] = "%d, %d, %d" % rgb(t["accent"])
+    tokens["accent_rgb"] = "%d, %d, %d" % hex_to_rgb(t["accent"])
     return Template(template).substitute(tokens)

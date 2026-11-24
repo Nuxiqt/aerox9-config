@@ -5,6 +5,7 @@ import json
 import os
 
 from . import protocol
+from .helper import hex_to_rgb
 
 PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")),
@@ -98,11 +99,6 @@ def unique_name(store, base):
 def switch_commands(old, new):
     """Commands to go from profile `old` to `new`. Buttons are sent only when the mapping differs."""
     return all_commands(new, include_buttons=new["buttons"] != old["buttons"])
-
-
-def hex_to_rgb(color):
-    color = color.lstrip("#")
-    return [int(color[i:i + 2], 16) for i in (0, 2, 4)]
 
 
 # Each section maps to the commands that apply it, so the GUI can send only what changed.

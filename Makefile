@@ -11,7 +11,7 @@ DESKTOP := $(PREFIX)/share/applications/$(APP_ID).desktop
 # A stale icon-theme.cache hides newly installed icons from GTK, so refresh it if one exists.
 UPDATE_ICON_CACHE = if [ -f $(ICON_THEME)/icon-theme.cache ]; then gtk-update-icon-cache -f -t -q $(ICON_THEME) || true; fi
 
-$(BIN): $(wildcard aerox9/*.py aerox9/*.css)
+$(BIN): $(wildcard aerox9/*.py aerox9/helper/*.py aerox9/*.css)
 	mkdir -p build/src
 	rm -rf build/src/aerox9
 	cp -r aerox9 build/src/
