@@ -28,6 +28,11 @@ DEFAULTS = {
 
 DEFAULT_PROFILE = "Default"
 
+# Global, not per-profile.
+APP_DEFAULTS = {
+    "theme": "dark",
+}
+
 
 def _merge(stored):
     """One profile's settings, with anything missing or unknown filled from DEFAULTS."""
@@ -43,7 +48,10 @@ def _merge(stored):
 
 
 def load_store(path=PATH):
-    """Returns {"active": name, "profiles": {name: settings}}; always has at least one profile."""
+    """Returns {"app": global settings, "active": name, "profiles": {name: settings}}.
+
+    There is always at least one profile.
+    """
     try:
         with open(path) as f:
             raw = json.load(f)
@@ -59,7 +67,10 @@ def load_store(path=PATH):
     else:  # file from before profiles existed: a flat settings dict
         profiles = {DEFAULT_PROFILE: _merge(raw)}
         active = DEFAULT_PROFILE
-    return {"active": active, "profiles": profiles}
+    app = dict(APP_DEFAULTS)
+    if isinstance(raw.get("app"), dict):
+        app.update((k, v) for k, v in raw["app"].items() if k in APP_DEFAULTS)
+    return {"app": app, "active": active, "profiles": profiles}
 
 
 def save_store(store, path=PATH):

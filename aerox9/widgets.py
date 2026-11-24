@@ -9,12 +9,21 @@ from gi.repository import GLib, Gtk
 from . import protocol
 from .settings import hex_to_rgb
 
+# Drawing palette (RGB floats); replaced by set_palette() when the color scheme changes.
 ACCENT = (1.0, 0.353, 0.122)
 BODY = (0.13, 0.145, 0.165)
 PART = (0.165, 0.18, 0.205)
 EDGE = (0.26, 0.28, 0.31)
 TEXT = (0.85, 0.87, 0.9)
 DIM = (0.54, 0.56, 0.6)
+HEX_FILL = (0.09, 0.1, 0.115)
+
+
+def set_palette(theme):
+    """Switch the diagram colors to a themes.THEMES entry; redraw widgets afterwards."""
+    global ACCENT, BODY, PART, EDGE, TEXT, DIM, HEX_FILL
+    ACCENT, BODY, PART, EDGE, TEXT, DIM, HEX_FILL = (
+        hex_to_rgbf(theme[k]) for k in ("accent", "d_body", "d_part", "d_edge", "d_text", "d_dim", "d_hex"))
 
 # Logical canvas; scaled to fit the widget.
 CW, CH = 560, 590
@@ -234,7 +243,7 @@ class MouseDiagram(Gtk.DrawingArea):
                     sel = zone in self.selected or zone == self.hover
                     cr.set_source_rgba(cr_r, cr_g, cr_b, 0.95 if sel or not self.selected else 0.55)
                 else:
-                    cr.set_source_rgb(0.09, 0.1, 0.115)
+                    cr.set_source_rgb(*HEX_FILL)
                 cr.fill()
                 x += dx
             y += dy

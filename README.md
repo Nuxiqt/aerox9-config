@@ -38,6 +38,11 @@ duplicates, renames and deletes profiles. Every setting (DPI, polling rate, ligh
 stored per profile. Switching sends the new profile to the mouse right away. The button mapping is only
 sent when it differs from the previous profile. Use **Save to mouse** to keep it across power cycles.
 
+### Settings
+App-wide settings, shared by all profiles. For now: the color scheme. **System** follows the desktop's
+light/dark preference and accent color (via the XDG settings portal, live), or pick **Dark**, **Light**
+or **Dark teal**.
+
 ## Compatibility
 
 Developed and tested only on **Arch Linux** + **KDE Plasma** (GTK 4.24, libadwaita 1.10, Python 3.14).

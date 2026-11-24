@@ -1,38 +1,40 @@
+/* Template: the dollar placeholders are filled from themes.py. */
 :root {
-  --accent-bg-color: #ff5a1f;
+  --accent-bg-color: $accent;
   --accent-fg-color: #ffffff;
-  --accent-color: #ff7a45;
-  --window-bg-color: #0d0e10;
-  --view-bg-color: #0d0e10;
-  --headerbar-bg-color: #0d0e10;
+  --accent-color: $accent_text;
+  --window-bg-color: $bg;
+  --view-bg-color: $bg;
+  --headerbar-bg-color: $bg;
   --headerbar-shade-color: transparent;
-  --sidebar-bg-color: #15171a;
-  --card-bg-color: #17191c;
-  --popover-bg-color: #1d2024;
+  --sidebar-bg-color: $sidebar;
+  --card-bg-color: $card;
+  --popover-bg-color: $popover;
+  --dialog-bg-color: $popover;
 }
 
-.sidebar-pane { background: #15171a; }
+.sidebar-pane { background: $sidebar; }
 .brand { font-size: 26px; font-weight: 900; letter-spacing: 3px; }
-.brand-sub { color: #8a8f98; font-size: 12px; letter-spacing: 2px; }
-.status { font-size: 12px; color: #8a8f98; }
-.status.online { color: #4cd964; }
+.brand-sub { color: $muted; font-size: 12px; letter-spacing: 2px; }
+.status { font-size: 12px; color: $muted; }
+.status.online { color: $ok; }
 
 .nav-button {
   padding: 12px 14px;
   border-radius: 10px;
   font-weight: 700;
   letter-spacing: 1px;
-  color: #b8bcc4;
+  color: $nav_fg;
 }
 .nav-button:checked {
-  background: rgba(255, 90, 31, 0.16);
-  color: #ff7a45;
-  box-shadow: inset 3px 0 0 #ff5a1f;
+  background: rgba($accent_rgb, 0.16);
+  color: $accent_text;
+  box-shadow: inset 3px 0 0 $accent;
 }
 
 .panel {
-  background: #17191c;
-  border: 1px solid #23262b;
+  background: $card;
+  border: 1px solid $border;
   border-radius: 14px;
   padding: 18px;
 }
@@ -40,46 +42,56 @@
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 2px;
-  color: #8a8f98;
+  color: $muted;
 }
 .panel-title { font-size: 20px; font-weight: 800; }
 .big-number { font-size: 44px; font-weight: 900; }
-.unit { font-size: 16px; font-weight: 700; color: #8a8f98; }
+.unit { font-size: 16px; font-weight: 700; color: $muted; }
 
 .dpi-stage {
   min-width: 92px;
   padding: 10px 6px;
   border-radius: 12px;
-  background: #1f2226;
+  background: $raised;
   border: 2px solid transparent;
 }
-.dpi-stage:checked { border-color: #ff5a1f; background: rgba(255, 90, 31, 0.10); }
+.dpi-stage:checked { border-color: $accent; background: rgba($accent_rgb, 0.10); }
 .stage-value { font-size: 20px; font-weight: 900; }
-.stage-tag { font-size: 9px; font-weight: 800; letter-spacing: 1px; color: #ff7a45; }
+.stage-tag { font-size: 9px; font-weight: 800; letter-spacing: 1px; color: $accent_text; }
 
 .segmented > button { padding: 8px 14px; font-weight: 700; }
-.segmented > button:checked { background: #ff5a1f; color: white; }
+.segmented > button:checked { background: $accent; color: white; }
 
 .bind-list, .option-list { background: transparent; }
 .bind-list row, .option-list row { border-radius: 8px; padding: 6px 10px; margin: 1px 0; }
-.bind-list row:selected { background: rgba(255, 90, 31, 0.16); }
+.bind-list row:selected { background: rgba($accent_rgb, 0.16); }
 .bind-name { font-weight: 700; }
-.binding { font-size: 12px; color: #8a8f98; }
-.binding.changed { color: #ff7a45; }
+.binding { font-size: 12px; color: $muted; }
+.binding.changed { color: $accent_text; }
 
 .apply-bar {
-  background: #1d2024;
-  border-top: 1px solid #2a2e33;
+  background: $popover;
+  border-top: 1px solid $border;
   padding: 10px 18px;
 }
 
-levelbar.battery trough { min-height: 8px; background: #2a2e33; border-radius: 4px; padding: 0; }
+levelbar.battery trough { min-height: 8px; background: $trough; border-radius: 4px; padding: 0; }
 levelbar.battery block { min-height: 8px; border-radius: 4px; }
 levelbar.battery block.empty { background: transparent; }
-levelbar.battery block.filled { background: #4cd964; }
-levelbar.battery block.filled.low { background: #ff3b30; }
+levelbar.battery block.filled { background: $ok; }
+levelbar.battery block.filled.low { background: $low; }
 
-.status.idle { color: #ffcc00; }
-.status.offline { color: #ff6b5f; }
-.status.charging, .big-number.charging { color: #4cd964; }
-.status.low, .big-number.low { color: #ff3b30; }
+.status.idle { color: $warn; }
+.status.offline { color: $bad; }
+.status.charging, .big-number.charging { color: $ok; }
+.status.low, .big-number.low { color: $low; }
+
+/* settings page: color scheme cards */
+.theme-card {
+  padding: 10px;
+  border-radius: 12px;
+  background: $raised;
+  border: 2px solid transparent;
+}
+.theme-card:checked { border-color: $accent; background: rgba($accent_rgb, 0.10); }
+.theme-name { font-weight: 700; }
