@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2d33"/>
+      <stop offset="1" stop-color="#121316"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="64" cy="64" r="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff3a0"/>
+      <stop offset="0.35" stop-color="#ffb21e"/>
+      <stop offset="0.75" stop-color="#e2430c"/>
+      <stop offset="1" stop-color="#7a1204"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="64" cy="64" r="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff6a1a" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#ff6a1a" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="lids">
+      <path d="M8,64 C54,28 74,28 120,64 C74,100 54,100 8,64 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- tile -->
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)"/>
+  <rect x="4.5" y="4.5" width="119" height="119" rx="25.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+  <circle cx="64" cy="64" r="52" fill="url(#glow)"/>
+
+  <!-- eye: sharp almond, slanted top-right to bottom-left -->
+  <g transform="rotate(-28 64 64)">
+  <path d="M8,64 C54,28 74,28 120,64 C74,100 54,100 8,64 Z" fill="#1a0a05"/>
+  <g clip-path="url(#lids)">
+    <circle cx="64" cy="64" r="30" fill="url(#iris)"/>
+    <!-- iris streaks -->
+    <g stroke="#7a1204" stroke-opacity="0.45" stroke-width="1.4" stroke-linecap="round">
+      <path d="M64,38V46M64,82V90M38,64H46M82,64H90M45.6,45.6L51,51M77,77L82.4,82.4M82.4,45.6L77,51M51,77L45.6,82.4"/>
+    </g>
+    <!-- slit pupil -->
+    <path d="M64,35 C71,50 71,78 64,93 C57,78 57,50 64,35 Z" fill="#050505"/>
+    <!-- upper lid shadow -->
+    <path d="M8,64 C54,28 74,28 120,64 C74,46 54,46 8,64 Z" fill="#000" fill-opacity="0.35"/>
+  </g>
+  <path d="M8,64 C54,28 74,28 120,64 C74,100 54,100 8,64 Z" fill="none" stroke="#0a0a0a" stroke-width="3" stroke-linejoin="miter"/>
+  </g>
+  <!-- catchlight -->
+  <ellipse cx="54" cy="52" rx="4" ry="2.6" fill="#ffffff" fill-opacity="0.85" transform="rotate(-30 54 52)"/>
+
+  <!-- crosshair -->
+  <g fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="butt">
+    <circle cx="64" cy="64" r="42" stroke-opacity="0.9"/>
+    <path d="M64,12V30M64,98V116M12,64H30M98,64H116"/>
+  </g>
+</svg>
