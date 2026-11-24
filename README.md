@@ -32,6 +32,12 @@ Battery level, sleep timer and LED dim timer.
 
 ![Power tab](docs/screenshots/power.png)
 
+### Profiles
+Keep separate setups (e.g. one per game). Pick the active profile in the sidebar; the **☰** menu creates,
+duplicates, renames and deletes profiles. Every setting (DPI, polling rate, lighting, power, buttons) is
+stored per profile. Switching sends the new profile to the mouse right away. The button mapping is only
+sent when it differs from the previous profile. Use **Save to mouse** to keep it across power cycles.
+
 ## Compatibility
 
 Developed and tested only on **Arch Linux** + **KDE Plasma** (GTK 4.24, libadwaita 1.10, Python 3.14).
@@ -62,13 +68,17 @@ On distros without systemd/logind (e.g. Void, Alpine, Gentoo with OpenRC) add th
 
     python3 -m aerox9            # GUI
     python3 -m aerox9 battery
-    python3 -m aerox9 apply [--buttons]   # re-send stored settings
+    python3 -m aerox9 apply [--buttons] [--profile NAME]   # re-send stored settings
+    python3 -m aerox9 profile                # list profiles (* = active)
+    python3 -m aerox9 profile use NAME       # switch profile and send it to the mouse
     python3 -m aerox9 save       # persist to onboard memory
     python3 -m unittest tests/test_protocol.py
 
 ## Notes
 
 - The mouse can't report its settings, so `~/.config/aerox9/settings.json` is the source of truth.
+  It holds all profiles; an older single-profile file is loaded as the "Default" profile.
+- To switch per game, e.g. Steam launch options: `aerox9 profile use CS2; %command%; aerox9 profile use Default`.
   Nothing is sent on startup; only settings you touch are sent (live), so onboard config is not overwritten.
 - Changes are volatile until you press **Save to mouse** (writes flash).
 - Button mapping is **experimental**, from the unmerged rivalcfg PR #243, and only sent when you press Apply

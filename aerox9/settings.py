@@ -26,12 +26,13 @@ DEFAULTS = {
 }
 
 
-def load(path=PATH):
+DEFAULT_PROFILE = "Default"
+
+
+def _merge(stored):
+    """One profile's settings, with anything missing or unknown filled from DEFAULTS."""
     data = copy.deepcopy(DEFAULTS)
-    try:
-        with open(path) as f:
-            stored = json.load(f)
-    except (OSError, ValueError):
+    if not isinstance(stored, dict):
         return data
     for key, value in stored.items():
         if key in ("colors", "buttons") and isinstance(value, dict):
@@ -41,12 +42,51 @@ def load(path=PATH):
     return data
 
 
-def save(data, path=PATH):
+def load_store(path=PATH):
+    """Returns {"active": name, "profiles": {name: settings}}; always has at least one profile."""
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+    except (OSError, ValueError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    if isinstance(raw.get("profiles"), dict) and raw["profiles"]:
+        profiles = {str(name): _merge(p) for name, p in raw["profiles"].items()}
+        active = raw.get("active")
+        if active not in profiles:
+            active = next(iter(profiles))
+    else:  # file from before profiles existed: a flat settings dict
+        profiles = {DEFAULT_PROFILE: _merge(raw)}
+        active = DEFAULT_PROFILE
+    return {"active": active, "profiles": profiles}
+
+
+def save_store(store, path=PATH):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(store, f, indent=2)
     os.replace(tmp, path)
+
+
+def load(path=PATH, profile=None):
+    """Settings of `profile` (default: the active one). Raises KeyError for an unknown profile."""
+    store = load_store(path)
+    return store["profiles"][store["active"] if profile is None else profile]
+
+
+def unique_name(store, base):
+    """`base`, or `base 2`, `base 3`… if that name is taken."""
+    name, n = base, 2
+    while name in store["profiles"]:
+        name, n = f"{base} {n}", n + 1
+    return name
+
+
+def switch_commands(old, new):
+    """Commands to go from profile `old` to `new`. Buttons are sent only when the mapping differs."""
+    return all_commands(new, include_buttons=new["buttons"] != old["buttons"])
 
 
 def hex_to_rgb(color):

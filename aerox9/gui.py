@@ -1,5 +1,6 @@
 """GTK4 / libadwaita GUI."""
 
+import copy
 import os
 import queue
 import threading
@@ -170,23 +171,47 @@ def _page(child):
     return Gtk.ScrolledWindow(child=clamp, hscrollbar_policy=Gtk.PolicyType.NEVER)
 
 
+def _dialog(parent, heading, body, responses, default, on_response, extra=None, destructive=False):
+    """Adw.AlertDialog (libadwaita 1.5+) or Adw.MessageDialog; on_response(id) gets the chosen id."""
+    if hasattr(Adw, "AlertDialog"):
+        dlg = Adw.AlertDialog(heading=heading, body=body or "")
+    else:
+        dlg = Adw.MessageDialog(transient_for=parent, modal=True, heading=heading, body=body or "")
+    for rid, text in responses:
+        dlg.add_response(rid, text)
+    dlg.set_default_response(default)
+    dlg.set_close_response(responses[0][0])
+    dlg.set_response_appearance(default, Adw.ResponseAppearance.DESTRUCTIVE if destructive
+                                else Adw.ResponseAppearance.SUGGESTED)
+    if extra:
+        dlg.set_extra_child(extra)
+    dlg.connect("response", lambda _d, rid: on_response(rid))
+    if hasattr(Adw, "AlertDialog"):
+        dlg.present(parent)
+    else:
+        dlg.present()
+    return dlg
+
+
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Aerox 9", default_width=1240, default_height=800)
         _register_icons()
-        self.data = settings.load()
+        self.store = settings.load_store()
+        self.data = self.store["profiles"][self.store["active"]]
         self._pending = {}
+        self._batt_stamp = ""
         self.worker = DeviceWorker(self._on_device_status)
+        self._install_profile_actions()
 
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=150)
         pages = [
-            ("buttons", "Buttons", "aerox9-buttons-symbolic", self._buttons_page()),
-            ("dpi", "DPI", "aerox9-dpi-symbolic", self._performance_page()),
-            ("lighting", "Illumination", "aerox9-lighting-symbolic", self._lighting_page()),
-            ("power", "Power", "aerox9-power-symbolic", self._power_page()),
+            ("buttons", "Buttons", "aerox9-buttons-symbolic"),
+            ("dpi", "DPI", "aerox9-dpi-symbolic"),
+            ("lighting", "Illumination", "aerox9-lighting-symbolic"),
+            ("power", "Power", "aerox9-power-symbolic"),
         ]
-        for name, _title, _icon, widget in pages:
-            self.stack.add_named(widget, name)
+        self._build_pages()
 
         self.page_title = _label("", "panel-title")
         header = Adw.HeaderBar(title_widget=self.page_title, css_classes=["flat"])
@@ -230,9 +255,27 @@ class Window(Adw.ApplicationWindow):
         batt_row.append(self.side_batt_lbl)
         box.append(batt_row)
 
+        box.append(_label("PROFILE", "section-title"))
+        prof_row = Gtk.Box(spacing=6, margin_bottom=18)
+        self.profile_model = Gtk.StringList()
+        self.profile_dd = Gtk.DropDown(model=self.profile_model, hexpand=True,
+                                       tooltip_text="Active profile")
+        self._syncing_profiles = False
+        self.profile_dd.connect("notify::selected", self._on_profile_selected)
+        prof_row.append(self.profile_dd)
+        menu = Gio.Menu()
+        menu.append("New profile…", "win.profile-new")
+        menu.append("Duplicate…", "win.profile-duplicate")
+        menu.append("Rename…", "win.profile-rename")
+        menu.append("Delete", "win.profile-delete")
+        prof_row.append(Gtk.MenuButton(icon_name="aerox9-menu-symbolic", menu_model=menu,
+                                       css_classes=["flat"], tooltip_text="Manage profiles"))
+        box.append(prof_row)
+        self._refresh_profiles()
+
         self.nav = {}
         group = None
-        for name, title, icon, _w in pages:
+        for name, title, icon in pages:
             inner = Gtk.Box(spacing=12)
             inner.append(Gtk.Image(icon_name=icon))
             inner.append(Gtk.Label(label=title.upper()))
@@ -260,6 +303,115 @@ class Window(Adw.ApplicationWindow):
         if btn.get_active():
             self.stack.set_visible_child_name(name)
             self.page_title.set_label(title)
+
+    # --- profiles -----------------------------------------------------------
+
+    def _build_pages(self):
+        """(Re)build every page from self.data, keeping the visible one."""
+        visible = self.stack.get_visible_child_name()
+        while child := self.stack.get_first_child():
+            self.stack.remove(child)
+        for name, widget in (
+            ("buttons", self._buttons_page()),
+            ("dpi", self._performance_page()),
+            ("lighting", self._lighting_page()),
+            ("power", self._power_page()),
+        ):
+            self.stack.add_named(widget, name)
+        if visible:
+            self.stack.set_visible_child_name(visible)
+        self.batt_updated.set_label(self._batt_stamp)
+        if hasattr(self, "status_lbl"):
+            self._render_status()
+
+    def _refresh_profiles(self):
+        names = list(self.store["profiles"])
+        self._syncing_profiles = True
+        self.profile_model.splice(0, self.profile_model.get_n_items(), names)
+        self.profile_dd.set_selected(names.index(self.store["active"]))
+        self._syncing_profiles = False
+        self.lookup_action("profile-delete").set_enabled(len(names) > 1)
+
+    def _on_profile_selected(self, dd, _p):
+        if self._syncing_profiles:
+            return
+        item = dd.get_selected_item()
+        if item and item.get_string() != self.store["active"]:
+            self._switch_profile(item.get_string())
+
+    def _switch_profile(self, name):
+        for src in self._pending.values():
+            GLib.source_remove(src)
+        self._pending.clear()
+        old = self.data
+        self.store["active"] = name
+        self.data = self.store["profiles"][name]
+        self._save()
+        self._refresh_profiles()
+        self._build_pages()
+        cmds = settings.switch_commands(old, self.data)
+        self.worker.submit(lambda m: m.send_all(cmds), lambda _: self._toast(f"Profile “{name}” applied"))
+
+    def _install_profile_actions(self):
+        for name, handler in (
+            ("profile-new", lambda: self._ask_name("New profile", "Create",
+                                                   settings.unique_name(self.store, "Profile"),
+                                                   lambda n: self._add_profile(n, settings.DEFAULTS))),
+            ("profile-duplicate", lambda: self._ask_name("Duplicate profile", "Duplicate",
+                                                         settings.unique_name(self.store, self.store["active"]),
+                                                         lambda n: self._add_profile(n, self.data))),
+            ("profile-rename", lambda: self._ask_name("Rename profile", "Rename", self.store["active"],
+                                                      self._rename_profile)),
+            ("profile-delete", self._confirm_delete),
+        ):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda _a, _p, h=handler: h())
+            self.add_action(action)
+
+    def _add_profile(self, name, source):
+        self.store["profiles"][name] = copy.deepcopy(source)
+        self._switch_profile(name)
+
+    def _rename_profile(self, name):
+        old = self.store["active"]
+        # rebuild the dict so the profile keeps its position in the list
+        self.store["profiles"] = {name if k == old else k: v for k, v in self.store["profiles"].items()}
+        self.store["active"] = name
+        self._save()
+        self._refresh_profiles()
+
+    def _confirm_delete(self):
+        name = self.store["active"]
+
+        def on_response(resp):
+            if resp != "delete":
+                return
+            names = list(self.store["profiles"])
+            nxt = names[names.index(name) - 1] if names.index(name) else names[1]
+            del self.store["profiles"][name]
+            self._switch_profile(nxt)
+
+        _dialog(self, f"Delete “{name}”?", "This can't be undone.",
+                [("cancel", "Cancel"), ("delete", "Delete")], "delete", on_response, destructive=True)
+
+    def _ask_name(self, heading, verb, initial, on_ok):
+        entry = Gtk.Entry(text=initial, activates_default=True)
+        current = self.store["active"] if verb == "Rename" else None
+
+        def valid():
+            n = entry.get_text().strip()
+            return bool(n) and (n == current or n not in self.store["profiles"])
+
+        def on_response(resp):
+            n = entry.get_text().strip()
+            if resp == "ok" and valid() and n != current:
+                on_ok(n)
+
+        dlg = _dialog(self, heading, None, [("cancel", "Cancel"), ("ok", verb)], "ok", on_response, extra=entry)
+        entry.connect("changed", lambda *_: dlg.set_response_enabled("ok", valid()))
+        dlg.set_response_enabled("ok", valid())
+        entry.grab_focus()
+        entry.select_region(0, -1)
 
     # --- device plumbing ----------------------------------------------------
 
@@ -310,7 +462,8 @@ class Window(Adw.ApplicationWindow):
             self._toast("Charging" if batt[1] else "Unplugged · on battery")
         self._batt = batt
         stamp = time.strftime("%H:%M:%S")
-        self.batt_updated.set_label(f"Updated {stamp}" if batt else f"Checked {stamp} · no reply")
+        self._batt_stamp = f"Updated {stamp}" if batt else f"Checked {stamp} · no reply"
+        self.batt_updated.set_label(self._batt_stamp)
         self._render_status()
 
     def _render_status(self):
@@ -360,7 +513,7 @@ class Window(Adw.ApplicationWindow):
 
     def _changed(self, section, debounce=False):
         """Persist settings and push `section` to the mouse."""
-        settings.save(self.data)
+        self._save()
         if section in self._pending:
             GLib.source_remove(self._pending.pop(section))
         if not debounce:
@@ -373,6 +526,9 @@ class Window(Adw.ApplicationWindow):
             return False
 
         self._pending[section] = GLib.timeout_add(DEBOUNCE_MS, fire)
+
+    def _save(self):
+        settings.save_store(self.store)
 
     def _send(self, section):
         cmds = settings.section_commands(self.data, section)
@@ -540,7 +696,7 @@ class Window(Adw.ApplicationWindow):
             self._toast("Refusing: at least one button must be Left click")
             return
         self.data["buttons"] = {k: list(v) for k, v in self.pending_buttons.items()}
-        settings.save(self.data)
+        self._save()
         self._refresh_bindings()
         cmds = settings.section_commands(self.data, "buttons")
         self.worker.submit(lambda m: m.send_all(cmds), lambda _: self._toast("Button mapping applied"))

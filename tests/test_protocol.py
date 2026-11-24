@@ -1,3 +1,6 @@
+import json
+import os
+import tempfile
 import unittest
 
 from aerox9 import protocol as p
@@ -54,6 +57,56 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(len(cmds), 1 + 1 + 3 + 1 + 1 + 1 + 1 + 3)
         self.assertEqual(settings.section_commands(dict(settings.DEFAULTS, rainbow=True), "lighting"),
                          [[0x22, 0xFF]])
+
+
+class ProfilesTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, "settings.json")
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_missing_file(self):
+        store = settings.load_store(self.path)
+        self.assertEqual(store["active"], settings.DEFAULT_PROFILE)
+        self.assertEqual(store["profiles"][settings.DEFAULT_PROFILE], settings.DEFAULTS)
+
+    def test_migrates_flat_file(self):
+        with open(self.path, "w") as f:
+            json.dump({"polling_rate": 500, "colors": {"top": "#123456"}}, f)
+        data = settings.load(self.path)
+        self.assertEqual(data["polling_rate"], 500)
+        self.assertEqual(data["colors"]["top"], "#123456")
+        self.assertEqual(data["colors"]["middle"], settings.DEFAULTS["colors"]["middle"])
+
+    def test_round_trip_and_active(self):
+        store = settings.load_store(self.path)
+        store["profiles"]["CS2"] = dict(settings.DEFAULTS, dpi=[800])
+        store["active"] = "CS2"
+        settings.save_store(store, self.path)
+        self.assertEqual(settings.load(self.path)["dpi"], [800])
+        self.assertEqual(settings.load(self.path, settings.DEFAULT_PROFILE)["dpi"], settings.DEFAULTS["dpi"])
+        with self.assertRaises(KeyError):
+            settings.load(self.path, "nope")
+
+    def test_bad_active_falls_back(self):
+        with open(self.path, "w") as f:
+            json.dump({"active": "gone", "profiles": {"A": {}, "B": {}}}, f)
+        self.assertEqual(settings.load_store(self.path)["active"], "A")
+
+    def test_unique_name(self):
+        store = {"profiles": {"Profile": {}, "Profile 2": {}}}
+        self.assertEqual(settings.unique_name(store, "Profile"), "Profile 3")
+        self.assertEqual(settings.unique_name(store, "CS2"), "CS2")
+
+    def test_switch_sends_buttons_only_when_changed(self):
+        a = settings.load(self.path)
+        b = settings.load(self.path)
+        n = len(settings.all_commands(a, include_buttons=False))
+        self.assertEqual(len(settings.switch_commands(a, b)), n)
+        b["buttons"]["side1"] = ["media", "Mute"]
+        self.assertEqual(len(settings.switch_commands(a, b)), n + 3)
 
 
 if __name__ == "__main__":
