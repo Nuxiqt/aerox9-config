@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from aerox9 import protocol as p
-from aerox9 import settings
+from aerox9 import settings, themes
 
 
 class ProtocolTest(unittest.TestCase):
@@ -94,6 +94,29 @@ class ProfilesTest(unittest.TestCase):
         with open(self.path, "w") as f:
             json.dump({"active": "gone", "profiles": {"A": {}, "B": {}}}, f)
         self.assertEqual(settings.load_store(self.path)["active"], "A")
+
+    def test_app_settings(self):
+        self.assertEqual(settings.load_store(self.path)["app"], settings.APP_DEFAULTS)
+        with open(self.path, "w") as f:
+            json.dump({"app": {"theme": "teal", "junk": 1}, "profiles": {"A": {}}}, f)
+        self.assertEqual(settings.load_store(self.path)["app"], {"theme": "teal"})
+
+    def test_themes_fill_css(self):
+        template = open(os.path.join(os.path.dirname(themes.__file__), "style.css")).read()
+        keys = set(themes.THEMES["dark"])
+        for name, theme in themes.THEMES.items():
+            self.assertEqual(set(theme), keys, name)
+            self.assertNotIn("$", themes.css(template, theme))
+        self.assertIs(themes.get("missing"), themes.THEMES[themes.DEFAULT])
+
+    def test_system_theme(self):
+        self.assertEqual(themes.resolve("teal"), themes.THEMES["teal"])
+        light = themes.resolve(themes.SYSTEM, dark=False)
+        self.assertEqual(light["bg"], themes.THEMES["light"]["bg"])
+        self.assertEqual(light["accent"], themes.THEMES["light"]["accent"])
+        dark = themes.resolve(themes.SYSTEM, dark=True, accent="#315bef")
+        self.assertEqual((dark["bg"], dark["accent"]), (themes.THEMES["dark"]["bg"], "#315bef"))
+        self.assertEqual(dark["accent_text"], "#6484f3")  # lightened toward white
 
     def test_unique_name(self):
         store = {"profiles": {"Profile": {}, "Profile 2": {}}}
