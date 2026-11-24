@@ -3,5 +3,6 @@ Type=Application
 Name=Aerox 9
 Comment=Configure DPI, lighting and buttons of the SteelSeries Aerox 9
 Exec=aerox9
-Icon=input-mouse
+Icon=io.github.aerox9
 Categories=Settings;HardwareSettings;
+StartupWMClass=io.github.aerox9

@@ -1177,6 +1177,8 @@ def run():
 
     def on_startup(a):
         _theme.apply(settings.load_store()["app"]["theme"])
+        _register_icons()
+        Gtk.Window.set_default_icon_name(APP_ID)  # X11 / windows without a matching .desktop file
 
     app.connect("startup", on_startup)
     app.connect("activate", lambda a: (a.get_active_window() or Window(a)).present())
