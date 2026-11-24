@@ -7,7 +7,7 @@ import cairo
 from gi.repository import GLib, Gtk
 
 from . import protocol
-from .settings import hex_to_rgb
+from .helper import hex_to_rgbf, rgbf_to_hex, round_rect
 
 # Drawing palette (RGB floats); replaced by set_palette() when the color scheme changes.
 ACCENT = (1.0, 0.353, 0.122)
@@ -32,23 +32,6 @@ SPLIT_Y = 235  # end of L/R buttons
 ZONE_BANDS = {"top": (245, 345), "middle": (345, 445), "bottom": (445, 550)}
 SIDE_GRID = [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12]]
 KEY, GAP, GX, GY = 54, 10, 348, 190
-
-
-def hex_to_rgbf(color):
-    return tuple(c / 255 for c in hex_to_rgb(color))
-
-
-def rgbf_to_hex(r, g, b):
-    return "#%02x%02x%02x" % tuple(round(min(max(c, 0), 1) * 255) for c in (r, g, b))
-
-
-def _round_rect(cr, x, y, w, h, r):
-    cr.new_sub_path()
-    cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
-    cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
-    cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
-    cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
-    cr.close_path()
 
 
 def _body_path(cr):
@@ -274,7 +257,7 @@ class MouseDiagram(Gtk.DrawingArea):
     def _draw_buttons(self, cr):
         # wheel, scroll arrows, dpi
         x, y, w, h = CX - 14, 92, 28, 66
-        _round_rect(cr, x, y, w, h, 12)
+        round_rect(cr, x, y, w, h, 12)
         self._part_fill(cr, "button3")
         cr.fill_preserve()
         cr.set_source_rgb(*EDGE)
@@ -296,7 +279,7 @@ class MouseDiagram(Gtk.DrawingArea):
             cr.close_path()
             cr.set_source_rgb(*TEXT)
             cr.fill()
-        _round_rect(cr, CX - 10, 198, 20, 26, 6)
+        round_rect(cr, CX - 10, 198, 20, 26, 6)
         self._part_fill(cr, "button6")
         cr.fill()
         _text(cr, "DPI", CX, 211, 7, TEXT)
@@ -309,7 +292,7 @@ class MouseDiagram(Gtk.DrawingArea):
         # side keypad
         pw = 3 * KEY + 2 * GAP
         ph = 4 * KEY + 3 * GAP
-        _round_rect(cr, GX - 14, GY - 44, pw + 28, ph + 58, 16)
+        round_rect(cr, GX - 14, GY - 44, pw + 28, ph + 58, 16)
         cr.set_source_rgb(*BODY)
         cr.fill_preserve()
         cr.set_source_rgb(*EDGE)
@@ -320,7 +303,7 @@ class MouseDiagram(Gtk.DrawingArea):
             for c, n in enumerate(row):
                 sid = f"side{n}"
                 kx, ky = GX + c * (KEY + GAP), GY + r * (KEY + GAP)
-                _round_rect(cr, kx, ky, KEY, KEY, 10)
+                round_rect(cr, kx, ky, KEY, KEY, 10)
                 self._part_fill(cr, sid)
                 cr.fill()
                 col = (1, 1, 1) if sid in self.selected else TEXT
@@ -421,7 +404,7 @@ class ColorPicker(Gtk.Box):
             self._refresh()
 
     def _draw_sv(self, _a, cr, w, h):
-        _round_rect(cr, 0, 0, w, h, 10)
+        round_rect(cr, 0, 0, w, h, 10)
         cr.clip()
         cr.set_source_rgb(*colorsys.hsv_to_rgb(self.h, 1, 1))
         cr.paint()
@@ -438,7 +421,7 @@ class ColorPicker(Gtk.Box):
         self._marker(cr, self.s * w, (1 - self.v) * h)
 
     def _draw_hue(self, _a, cr, w, h):
-        _round_rect(cr, 0, 0, w, h, h / 2)
+        round_rect(cr, 0, 0, w, h, h / 2)
         g = cairo.LinearGradient(0, 0, w, 0)
         for i in range(7):
             g.add_color_stop_rgb(i / 6, *colorsys.hsv_to_rgb(i / 6 % 1, 1, 1))

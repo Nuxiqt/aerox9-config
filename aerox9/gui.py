@@ -1,12 +1,7 @@
 """GTK4 / libadwaita GUI."""
 
 import copy
-import math
-import os
-import queue
-import threading
 import time
-from importlib import resources
 
 import gi
 
@@ -14,8 +9,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
-from . import protocol, settings, themes, widgets  # noqa: E402
-from .device import DeviceError, Mouse  # noqa: E402
+from . import protocol, settings, themes  # noqa: E402
+from .helper import rgbf_to_hex, ui  # noqa: E402
+from .helper.actions import CATEGORIES, KIND_CATEGORY, action_label, action_short  # noqa: E402
+from .helper.theme_controller import controller as theme, theme_preview  # noqa: E402
+from .helper.worker import DeviceWorker  # noqa: E402
 from .widgets import ColorPicker, MouseDiagram  # noqa: E402
 
 APP_ID = "io.github.aerox9"
@@ -24,180 +22,10 @@ POLL_S = 5  # battery / charging poll interval
 HOTPLUG_SETTLE_MS = 1000
 
 
-class DeviceWorker:
-    """Serialises all HID I/O on one background thread."""
-
-    def __init__(self, on_status):
-        self._q = queue.Queue()
-        self._mouse = None
-        # called on the main loop: ((name, wireless) or None, error or None)
-        self._on_status = on_status
-        threading.Thread(target=self._run, daemon=True).start()
-
-    def submit(self, job, on_done=None):
-        """job(mouse) runs on the worker; on_done(result) runs on the main loop."""
-        self._q.put((job, on_done))
-
-    def reset(self):
-        """Close the device so the next job re-discovers it (e.g. after a hotplug)."""
-        self._q.put((None, None))
-
-    def _close(self):
-        if self._mouse:
-            self._mouse.close()
-        self._mouse = None
-
-    def _run(self):
-        while True:
-            job, on_done = self._q.get()
-            if job is None:
-                self._close()
-                continue
-            try:
-                if self._mouse is None:
-                    self._mouse = Mouse.open()
-                    GLib.idle_add(self._on_status, (self._mouse.name, self._mouse.wireless), None)
-                result = job(self._mouse)
-            except DeviceError as e:
-                self._close()
-                GLib.idle_add(self._on_status, None, str(e))
-                continue
-            if on_done:
-                GLib.idle_add(on_done, result)
-
-
-# --- action labels -----------------------------------------------------------
-
-MOUSE_LABELS = {
-    "left": "Left click", "right": "Right click", "middle": "Middle click",
-    "back": "Back", "forward": "Forward", "scroll_up": "Scroll up", "scroll_down": "Scroll down",
-}
-MOUSE_SHORT = {
-    "left": "L-Click", "right": "R-Click", "middle": "M-Click", "back": "Back",
-    "forward": "Fwd", "scroll_up": "Scr Up", "scroll_down": "Scr Dn",
-}
-MEDIA_LABELS = {
-    "PlayPause": "Play / Pause", "Next": "Next track", "Previous": "Previous track",
-    "Mute": "Mute", "VolumeUp": "Volume up", "VolumeDown": "Volume down",
-}
-MEDIA_SHORT = {
-    "PlayPause": "Play", "Next": "Next", "Previous": "Prev",
-    "Mute": "Mute", "VolumeUp": "Vol +", "VolumeDown": "Vol -",
-}
-KEY_SYMBOLS = {
-    "Minus": "-", "Equal": "=", "LeftBracket": "[", "RightBracket": "]", "Backslash": "\\",
-    "Semicolon": ";", "Quote": "'", "Grave": "`", "Comma": ",", "Period": ".", "Slash": "/",
-}
-CATEGORIES = {
-    "Mouse": [("mouse", m) for m in protocol.MOUSE_TARGETS],
-    "Keyboard": [("key", k) for k in protocol.KEYS],
-    "Media": [("media", k) for k in protocol.MEDIA_KEYS],
-    "Other": [("dpi", None), ("disabled", None)],
-}
-KIND_CATEGORY = {"mouse": "Mouse", "key": "Keyboard", "media": "Media", "dpi": "Other", "disabled": "Other"}
-
-
-def action_label(action):
-    kind, value = action
-    if kind == "mouse":
-        return MOUSE_LABELS[value]
-    if kind == "key":
-        return f"Key  {KEY_SYMBOLS.get(value, value)}"
-    if kind == "media":
-        return MEDIA_LABELS[value]
-    return "DPI cycle" if kind == "dpi" else "Disabled"
-
-
-def action_short(action):
-    kind, value = action
-    if kind == "mouse":
-        return MOUSE_SHORT[value]
-    if kind == "key":
-        return KEY_SYMBOLS.get(value, value)
-    if kind == "media":
-        return MEDIA_SHORT[value]
-    return "DPI" if kind == "dpi" else "—"
-
-
-# --- small builders ----------------------------------------------------------
-
-_icons_registered = False
-
-
-def _register_icons():
-    """Make the bundled aerox9-*-symbolic icons findable, independent of the system icon theme.
-
-    Running from source: the package's icons/ folder is added to the search path.
-    Installed zipapp: `make install` puts them in ~/.local/share/icons/hicolor, which GTK always searches.
-    """
-    global _icons_registered
-    if _icons_registered:
-        return
-    _icons_registered = True
-    icons = resources.files(__package__) / "icons"
-    if isinstance(icons, os.PathLike) and os.path.isdir(icons):
-        Gtk.IconTheme.get_for_display(Gdk.Display.get_default()).add_search_path(os.fspath(icons))
-
-
-def _label(text, *classes, **kw):
-    kw.setdefault("xalign", 0)
-    return Gtk.Label(label=text, css_classes=list(classes), **kw)
-
-
-def _panel(title=None, spacing=12):
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing, css_classes=["panel"])
-    if title:
-        box.append(_label(title.upper(), "section-title"))
-    return box
-
-
-def _segmented(options, active, on_toggle):
-    """Linked toggle buttons; on_toggle(value) fires when one becomes active."""
-    box = Gtk.Box(css_classes=["linked", "segmented"])
-    buttons = {}
-    first = None
-    for value, text in options:
-        btn = Gtk.ToggleButton(label=text, group=first)
-        first = first or btn
-        btn.set_active(value == active)
-        btn.connect("toggled", lambda b, v=value: b.get_active() and on_toggle(v))
-        box.append(btn)
-        buttons[value] = btn
-    return box, buttons
-
-
-def _page(child):
-    clamp = Adw.Clamp(maximum_size=1100, child=child, margin_top=24, margin_bottom=24,
-                      margin_start=24, margin_end=24)
-    return Gtk.ScrolledWindow(child=clamp, hscrollbar_policy=Gtk.PolicyType.NEVER)
-
-
-def _dialog(parent, heading, body, responses, default, on_response, extra=None, destructive=False):
-    """Adw.AlertDialog (libadwaita 1.5+) or Adw.MessageDialog; on_response(id) gets the chosen id."""
-    if hasattr(Adw, "AlertDialog"):
-        dlg = Adw.AlertDialog(heading=heading, body=body or "")
-    else:
-        dlg = Adw.MessageDialog(transient_for=parent, modal=True, heading=heading, body=body or "")
-    for rid, text in responses:
-        dlg.add_response(rid, text)
-    dlg.set_default_response(default)
-    dlg.set_close_response(responses[0][0])
-    dlg.set_response_appearance(default, Adw.ResponseAppearance.DESTRUCTIVE if destructive
-                                else Adw.ResponseAppearance.SUGGESTED)
-    if extra:
-        dlg.set_extra_child(extra)
-    dlg.connect("response", lambda _d, rid: on_response(rid))
-    if hasattr(Adw, "AlertDialog"):
-        dlg.present(parent)
-    else:
-        dlg.present()
-    return dlg
-
-
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Aerox 9", default_width=1240, default_height=800)
-        _register_icons()
+        ui.register_icons()
         self.store = settings.load_store()
         self.data = self.store["profiles"][self.store["active"]]
         self._pending = {}
@@ -213,10 +41,10 @@ class Window(Adw.ApplicationWindow):
             ("power", "Power", "aerox9-power-symbolic"),
         ]
         self.stack.add_named(self._settings_page(), "settings")
-        _theme.listeners.append(self._redraw_diagrams)
+        theme.listeners.append(self._redraw_diagrams)
         self._build_pages()
 
-        self.page_title = _label("", "panel-title")
+        self.page_title = ui.label("", "panel-title")
         header = Adw.HeaderBar(title_widget=self.page_title, css_classes=["flat"])
         self.banner = Adw.Banner(title="Looking for mouse…", button_label="Retry", revealed=True)
         self.banner.connect("button-clicked", lambda *_: self._probe())
@@ -239,11 +67,11 @@ class Window(Adw.ApplicationWindow):
     def _sidebar(self, pages):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_start=14,
                       margin_end=14, margin_bottom=16)
-        box.append(_label("AEROX 9", "brand", margin_top=4))
-        box.append(_label("WIRELESS", "brand-sub"))
+        box.append(ui.label("AEROX 9", "brand", margin_top=4))
+        box.append(ui.label("WIRELESS", "brand-sub"))
         conn_row = Gtk.Box(spacing=8, margin_top=10)
         self.conn_icon = Gtk.Image(icon_name="aerox9-offline-symbolic", css_classes=["status"])
-        self.status_lbl = _label("Searching…", "status")
+        self.status_lbl = ui.label("Searching…", "status")
         conn_row.append(self.conn_icon)
         conn_row.append(self.status_lbl)
         box.append(conn_row)
@@ -253,12 +81,12 @@ class Window(Adw.ApplicationWindow):
         self.side_batt_bar.remove_offset_value("low")
         self.side_batt_bar.remove_offset_value("high")
         self.side_batt_bar.remove_offset_value("full")
-        self.side_batt_lbl = _label("—", "status")
+        self.side_batt_lbl = ui.label("—", "status")
         batt_row.append(self.side_batt_bar)
         batt_row.append(self.side_batt_lbl)
         box.append(batt_row)
 
-        box.append(_label("PROFILE", "section-title"))
+        box.append(ui.label("PROFILE", "section-title"))
         prof_row = Gtk.Box(spacing=6, margin_bottom=18)
         self.profile_model = Gtk.StringList()
         self.profile_dd = Gtk.DropDown(model=self.profile_model, hexpand=True,
@@ -403,7 +231,7 @@ class Window(Adw.ApplicationWindow):
             del self.store["profiles"][name]
             self._switch_profile(nxt)
 
-        _dialog(self, f"Delete “{name}”?", "This can't be undone.",
+        ui.dialog(self, f"Delete “{name}”?", "This can't be undone.",
                 [("cancel", "Cancel"), ("delete", "Delete")], "delete", on_response, destructive=True)
 
     def _ask_name(self, heading, verb, initial, on_ok):
@@ -419,7 +247,7 @@ class Window(Adw.ApplicationWindow):
             if resp == "ok" and valid() and n != current:
                 on_ok(n)
 
-        dlg = _dialog(self, heading, None, [("cancel", "Cancel"), ("ok", verb)], "ok", on_response, extra=entry)
+        dlg = ui.dialog(self, heading, None, [("cancel", "Cancel"), ("ok", verb)], "ok", on_response, extra=entry)
         entry.connect("changed", lambda *_: dlg.set_response_enabled("ok", valid()))
         dlg.set_response_enabled("ok", valid())
         entry.grab_focus()
@@ -429,35 +257,35 @@ class Window(Adw.ApplicationWindow):
 
     def _settings_page(self):
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
-        panel = _panel("Appearance · color scheme")
+        panel = ui.panel("Appearance · color scheme")
         cards = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
                             max_children_per_line=4, column_spacing=12, row_spacing=12)
         group = None
         for name in themes.CHOICES:
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
             if name == themes.SYSTEM:
-                preview = _theme_preview(lambda: _theme.system_palette())
-                _theme.listeners.append(preview.queue_draw)
+                preview = theme_preview(lambda: theme.system_palette())
+                theme.listeners.append(preview.queue_draw)
             else:
-                preview = _theme_preview(lambda t=themes.THEMES[name]: t)
+                preview = theme_preview(lambda t=themes.THEMES[name]: t)
             card.append(preview)
-            card.append(_label(themes.LABELS[name], "theme-name"))
+            card.append(ui.label(themes.LABELS[name], "theme-name"))
             btn = Gtk.ToggleButton(child=card, group=group, css_classes=["theme-card"])
             group = group or btn
             btn.set_active(name == self.store["app"]["theme"])
             btn.connect("toggled", lambda b, n=name: b.get_active() and self._set_theme(n))
             cards.append(btn)
         panel.append(cards)
-        panel.append(_label("System follows your desktop's light/dark setting and accent color. "
+        panel.append(ui.label("System follows your desktop's light/dark setting and accent color. "
                             "Applies to the app only; nothing is sent to the mouse. "
                             "Shared by all profiles.", "binding", wrap=True))
         col.append(panel)
-        return _page(col)
+        return ui.page(col)
 
     def _set_theme(self, name):
         self.store["app"]["theme"] = name
         self._save()
-        _theme.apply(name)
+        theme.apply(name)
 
     def _redraw_diagrams(self):
         for diagram in (self.btn_diagram, self.light_diagram):
@@ -610,17 +438,17 @@ class Window(Adw.ApplicationWindow):
         for title, buttons in (("Main", main), ("Side keypad", side)):
             self.btn_list.append(Gtk.ListBoxRow(
                 selectable=False, activatable=False,
-                child=_label(title.upper(), "section-title", margin_top=10)))
+                child=ui.label(title.upper(), "section-title", margin_top=10)))
             for bid, name, _d in buttons:
                 vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-                vbox.append(_label(name, "bind-name"))
-                binding = _label("", "binding")
+                vbox.append(ui.label(name, "bind-name"))
+                binding = ui.label("", "binding")
                 vbox.append(binding)
                 row = Gtk.ListBoxRow(child=vbox)
                 row.bid = bid
                 self.btn_list.append(row)
                 self.btn_rows[bid] = (row, binding)
-        left = _panel(spacing=0)
+        left = ui.panel(spacing=0)
         left.set_size_request(240, -1)
         left.append(Gtk.ScrolledWindow(child=self.btn_list, vexpand=True,
                                        hscrollbar_policy=Gtk.PolicyType.NEVER))
@@ -630,14 +458,14 @@ class Window(Adw.ApplicationWindow):
         self.btn_diagram.on_select = self._select_button
 
         # right: binding editor
-        right = _panel()
+        right = ui.panel()
         right.set_size_request(320, -1)
-        self.bind_title = _label("", "panel-title")
-        self.bind_current = _label("", "binding")
+        self.bind_title = ui.label("", "panel-title")
+        self.bind_current = ui.label("", "binding")
         right.append(self.bind_title)
         right.append(self.bind_current)
         self.category = "Mouse"
-        seg, self.cat_buttons = _segmented([(c, c) for c in CATEGORIES], self.category, self._on_category)
+        seg, self.cat_buttons = ui.segmented([(c, c) for c in CATEGORIES], self.category, self._on_category)
         right.append(seg)
         self.opt_search = Gtk.SearchEntry(placeholder_text="Search keys", visible=False)
         self.opt_search.connect("search-changed", lambda *_: self.opt_list.invalidate_filter())
@@ -658,7 +486,7 @@ class Window(Adw.ApplicationWindow):
 
         # bottom: apply bar
         bar = Gtk.Box(spacing=12, css_classes=["apply-bar"])
-        bar.append(_label("Button changes are not applied yet (experimental)", hexpand=True))
+        bar.append(ui.label("Button changes are not applied yet (experimental)", hexpand=True))
         reset_all = Gtk.Button(label="Reset all", css_classes=["flat"])
         reset_all.connect("clicked", lambda *_: self._set_pending(dict(protocol.DEFAULT_BUTTONS)))
         revert = Gtk.Button(label="Revert")
@@ -720,7 +548,7 @@ class Window(Adw.ApplicationWindow):
         current = self.pending_buttons[self.sel_button]
         for action in CATEGORIES[self.category]:
             box = Gtk.Box(spacing=8)
-            box.append(_label(action_label(action), hexpand=True))
+            box.append(ui.label(action_label(action), hexpand=True))
             if action == current:
                 box.append(Gtk.Image(icon_name="aerox9-check-symbolic", css_classes=["accent"]))
             row = Gtk.ListBoxRow(child=box)
@@ -758,7 +586,7 @@ class Window(Adw.ApplicationWindow):
         self._syncing_dpi = False
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
 
-        sens = _panel("Sensitivity · DPI stages")
+        sens = ui.panel("Sensitivity · DPI stages")
         top = Gtk.Box(spacing=10)
         self.stage_box = Gtk.Box(spacing=10, hexpand=True)
         top.append(self.stage_box)
@@ -773,9 +601,9 @@ class Window(Adw.ApplicationWindow):
         sens.append(top)
 
         value_row = Gtk.Box(spacing=8, margin_top=12)
-        self.dpi_big = _label("", "big-number")
+        self.dpi_big = ui.label("", "big-number")
         value_row.append(self.dpi_big)
-        value_row.append(_label("DPI", "unit", valign=Gtk.Align.BASELINE_CENTER, hexpand=True))
+        value_row.append(ui.label("DPI", "unit", valign=Gtk.Align.BASELINE_CENTER, hexpand=True))
         self.dpi_spin = Gtk.SpinButton.new_with_range(protocol.DPI_MIN, protocol.DPI_MAX, protocol.DPI_STEP)
         self.dpi_spin.set_valign(Gtk.Align.CENTER)
         value_row.append(self.dpi_spin)
@@ -795,20 +623,20 @@ class Window(Adw.ApplicationWindow):
         sens.append(self.set_active_btn)
         col.append(sens)
 
-        poll = _panel("Polling rate")
+        poll = ui.panel("Polling rate")
         rates = sorted(protocol.POLLING_RATES)
 
         def on_rate(rate):
             self.data["polling_rate"] = rate
             self._changed("polling_rate")
 
-        seg, _ = _segmented([(r, f"{r} Hz") for r in rates], self.data["polling_rate"], on_rate)
+        seg, _ = ui.segmented([(r, f"{r} Hz") for r in rates], self.data["polling_rate"], on_rate)
         seg.set_halign(Gtk.Align.START)
         poll.append(seg)
         col.append(poll)
 
         self._rebuild_stages()
-        return _page(col)
+        return ui.page(col)
 
     def _rebuild_stages(self):
         while child := self.stage_box.get_first_child():
@@ -817,10 +645,10 @@ class Window(Adw.ApplicationWindow):
         group = None
         for i, dpi in enumerate(self.data["dpi"]):
             vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            vbox.append(_label(f"STAGE {i + 1}", "section-title", xalign=0.5))
-            value = _label(str(dpi), "stage-value", xalign=0.5)
+            vbox.append(ui.label(f"STAGE {i + 1}", "section-title", xalign=0.5))
+            value = ui.label(str(dpi), "stage-value", xalign=0.5)
             vbox.append(value)
-            vbox.append(_label("ACTIVE" if i == self.data["dpi_active"] else " ", "stage-tag", xalign=0.5))
+            vbox.append(ui.label("ACTIVE" if i == self.data["dpi_active"] else " ", "stage-tag", xalign=0.5))
             btn = Gtk.ToggleButton(child=vbox, group=group, css_classes=["dpi-stage"])
             group = group or btn
             btn.set_active(i == self.sel_stage)
@@ -886,13 +714,13 @@ class Window(Adw.ApplicationWindow):
         right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
         right.set_size_request(360, -1)
 
-        effect = _panel("Effect")
-        seg, _ = _segmented([(False, "Static"), (True, "Rainbow")], self.data["rainbow"], self._on_effect)
+        effect = ui.panel("Effect")
+        seg, _ = ui.segmented([(False, "Static"), (True, "Rainbow")], self.data["rainbow"], self._on_effect)
         effect.append(seg)
         right.append(effect)
 
-        self.color_panel = _panel("Color")
-        seg, self.zone_buttons = _segmented(
+        self.color_panel = ui.panel("Color")
+        seg, self.zone_buttons = ui.segmented(
             [("all", "All")] + [(z, z.capitalize()) for z in protocol.ZONES], "all", self._on_zone)
         self.color_panel.append(seg)
         self.picker = ColorPicker()
@@ -902,11 +730,11 @@ class Window(Adw.ApplicationWindow):
         self.color_panel.set_sensitive(not self.data["rainbow"])
         right.append(self.color_panel)
 
-        reactive = _panel("Reactive · flash on click")
+        reactive = ui.panel("Reactive · flash on click")
         row = Gtk.Box(spacing=12)
         sw = Gtk.Switch(active=self.data["reactive"] is not None, valign=Gtk.Align.CENTER)
         row.append(sw)
-        row.append(_label("Enabled", hexpand=True))
+        row.append(ui.label("Enabled", hexpand=True))
         color_btn = Gtk.ColorDialogButton(dialog=Gtk.ColorDialog(with_alpha=False), valign=Gtk.Align.CENTER)
         rgba = Gdk.RGBA()
         rgba.parse(self.data["reactive"] or "#ffffff")
@@ -917,7 +745,7 @@ class Window(Adw.ApplicationWindow):
 
         def reactive_hex():
             c = color_btn.get_rgba()
-            return "#%02x%02x%02x" % tuple(round(x * 255) for x in (c.red, c.green, c.blue))
+            return rgbf_to_hex(c.red, c.green, c.blue)
 
         def on_switch(s, _p):
             color_btn.set_sensitive(s.get_active())
@@ -933,7 +761,7 @@ class Window(Adw.ApplicationWindow):
         color_btn.connect("notify::rgba", on_color)
         right.append(reactive)
 
-        startup = _panel("Power-on lighting")
+        startup = ui.panel("Power-on lighting")
         modes = list(protocol.DEFAULT_LIGHTING)
         dd = Gtk.DropDown.new_from_strings([m.replace("-", " + ").capitalize() for m in modes])
         dd.set_selected(modes.index(self.data["default_lighting"]))
@@ -950,7 +778,7 @@ class Window(Adw.ApplicationWindow):
         body = Gtk.Box(spacing=16)
         body.append(self.light_diagram)
         body.append(right)
-        return _page(body)
+        return ui.page(body)
 
     def _on_effect(self, rainbow):
         self.data["rainbow"] = rainbow
@@ -975,13 +803,13 @@ class Window(Adw.ApplicationWindow):
     def _power_page(self):
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
 
-        batt = _panel("Battery")
+        batt = ui.panel("Battery")
         row = Gtk.Box(spacing=16)
-        self.batt_big = _label("—", "big-number")
+        self.batt_big = ui.label("—", "big-number")
         row.append(self.batt_big)
         info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, hexpand=True, valign=Gtk.Align.CENTER)
-        self.batt_state = _label("", "binding")
-        self.batt_updated = _label("", "binding")
+        self.batt_state = ui.label("", "binding")
+        self.batt_updated = ui.label("", "binding")
         info.append(self.batt_state)
         info.append(self.batt_updated)
         row.append(info)
@@ -1006,8 +834,8 @@ class Window(Adw.ApplicationWindow):
             ("sleep_timer", "Sleep after idle", protocol.SLEEP_MAX_MIN, fmt_min, 1),
             ("dim_timer", "Dim lighting after idle", protocol.DIM_MAX_S, fmt_sec, 5),
         ):
-            panel = _panel(title)
-            value = _label(fmt(self.data[key]), "panel-title")
+            panel = ui.panel(title)
+            value = ui.label(fmt(self.data[key]), "panel-title")
             panel.append(value)
             scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, maximum, step)
             scale.set_draw_value(False)
@@ -1022,162 +850,15 @@ class Window(Adw.ApplicationWindow):
             scale.connect("value-changed", on_value)
             panel.append(scale)
             col.append(panel)
-        return _page(col)
-
-
-class _ThemeController:
-    """Applies a color scheme to the CSS and the diagrams; for "system", follows the desktop live."""
-
-    def __init__(self):
-        self.name = None
-        self.listeners = []  # called after every (re)apply, e.g. to redraw custom-drawn widgets
-        self._provider = None
-        self._template = None
-        self._portal = None
-        self._portal_accent = None
-        self._watching = False
-
-    def apply(self, name):
-        self.name = name
-        sm = Adw.StyleManager.get_default()
-        if name == themes.SYSTEM:
-            self._watch()
-            sm.set_color_scheme(Adw.ColorScheme.DEFAULT)  # libadwaita follows the desktop setting
-            theme = self.system_palette()
-        else:
-            theme = themes.get(name)
-            sm.set_color_scheme(Adw.ColorScheme.FORCE_LIGHT if theme["scheme"] == "light"
-                                else Adw.ColorScheme.FORCE_DARK)
-        widgets.set_palette(theme)
-        if self._provider is None:
-            self._template = resources.files(__package__).joinpath("style.css").read_text()
-            self._provider = Gtk.CssProvider()
-            Gtk.StyleContext.add_provider_for_display(
-                Gdk.Display.get_default(), self._provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-        self._provider.load_from_string(themes.css(self._template, theme))
-        for fn in self.listeners:
-            fn()
-
-    def system_palette(self):
-        sm = Adw.StyleManager.get_default()
-        return themes.resolve(themes.SYSTEM, dark=sm.get_system_supports_color_schemes() and self._system_dark(),
-                              accent=self._system_accent())
-
-    def _system_dark(self):
-        sm = Adw.StyleManager.get_default()
-        if self.name == themes.SYSTEM:
-            return sm.get_dark()
-        # while a fixed scheme is forced, get_dark() reports that instead of the desktop's choice
-        pref = self._portal_read("color-scheme")
-        return pref.unpack() == 1 if pref is not None else sm.get_dark()
-
-    def _system_accent(self):
-        """The desktop accent as "#rrggbb", or None (then the theme's own accent is used)."""
-        if self._portal_accent is None:
-            v = self._portal_read("accent-color")
-            self._portal_accent = _accent_hex(v.unpack()) if v is not None else ""
-        if self._portal_accent:
-            return self._portal_accent
-        # no portal: libadwaita 1.6+ still knows the (rounded) system accent
-        sm = Adw.StyleManager.get_default()
-        if hasattr(sm, "get_system_supports_accent_colors") and sm.get_system_supports_accent_colors():
-            c = sm.get_accent_color_rgba()
-            return _accent_hex((c.red, c.green, c.blue))
-        return None
-
-    # --- desktop settings portal (org.freedesktop.appearance) --------------
-
-    def _proxy(self):
-        if self._portal is None:
-            try:
-                self._portal = Gio.DBusProxy.new_for_bus_sync(
-                    Gio.BusType.SESSION, Gio.DBusProxyFlags.DO_NOT_AUTO_START_AT_CONSTRUCTION, None,
-                    "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
-                    "org.freedesktop.portal.Settings", None)
-            except GLib.Error:
-                self._portal = False
-        return self._portal or None
-
-    def _portal_read(self, key):
-        proxy = self._proxy()
-        if proxy is None:
-            return None
-        args = GLib.Variant("(ss)", ("org.freedesktop.appearance", key))
-        try:
-            return proxy.call_sync("ReadOne", args, Gio.DBusCallFlags.NONE, 1000, None).get_child_value(0) \
-                .get_variant()
-        except GLib.Error:
-            pass
-        try:  # portals before ReadOne existed wrap the value twice
-            v = proxy.call_sync("Read", args, Gio.DBusCallFlags.NONE, 1000, None).get_child_value(0).get_variant()
-            return v.get_variant() if v.get_type_string() == "v" else v
-        except GLib.Error:
-            return None
-
-    def _watch(self):
-        if self._watching:
-            return
-        self._watching = True
-
-        def on_change(*_):
-            if self.name == themes.SYSTEM:
-                self.apply(self.name)
-
-        Adw.StyleManager.get_default().connect("notify::dark", on_change)
-        proxy = self._proxy()
-        if proxy is not None:
-            def on_signal(_p, _sender, signal, params):
-                ns, key, value = params.unpack()
-                if signal == "SettingChanged" and ns == "org.freedesktop.appearance" and key == "accent-color":
-                    self._portal_accent = _accent_hex(value) or ""
-                    on_change()
-            proxy.connect("g-signal", on_signal)
-
-
-def _accent_hex(rgb):
-    """Portal accent (floats 0..1; out of range = unset) to "#rrggbb", or None."""
-    try:
-        if len(rgb) == 3 and all(0 <= c <= 1 for c in rgb):
-            return "#%02x%02x%02x" % tuple(round(c * 255) for c in rgb)
-    except TypeError:
-        pass
-    return None
-
-
-_theme = _ThemeController()
-
-
-def _theme_preview(get_theme):
-    """A small mock of the app in get_theme()'s colors: sidebar with a selected item, a card, a button."""
-    def draw(_a, cr, w, h):
-        theme = get_theme()
-        def rect(x, y, rw, rh, color, r=4):
-            cr.new_sub_path()
-            for cx, cy, a in ((x + rw - r, y + r, -90), (x + rw - r, y + rh - r, 0),
-                              (x + r, y + rh - r, 90), (x + r, y + r, 180)):
-                cr.arc(cx, cy, r, math.radians(a), math.radians(a + 90))
-            cr.close_path()
-            cr.set_source_rgb(*themes.rgbf(color))
-            cr.fill()
-        rect(0, 0, w, h, theme["bg"], 8)
-        rect(0, 0, w * 0.32, h, theme["sidebar"], 8)
-        for i in range(3):
-            rect(8, 14 + i * 16, w * 0.32 - 16, 9, theme["accent"] if i == 0 else theme["raised"], 3)
-        rect(w * 0.32 + 10, 12, w * 0.68 - 20, h - 24, theme["card"], 6)
-        rect(w * 0.32 + 20, 22, w * 0.3, 7, theme["muted"], 3)
-        rect(w * 0.32 + 20, 36, w * 0.45, 7, theme["trough"], 3)
-        rect(w - 58, h - 34, 38, 12, theme["accent"], 6)
-    area = Gtk.DrawingArea(content_width=150, content_height=90)
-    area.set_draw_func(draw)
-    return area
+        return ui.page(col)
 
 
 def run():
     app = Adw.Application(application_id=APP_ID)
 
     def on_startup(a):
-        _theme.apply(settings.load_store()["app"]["theme"])
-        _register_icons()
+        theme.apply(settings.load_store()["app"]["theme"])
+        ui.register_icons()
         Gtk.Window.set_default_icon_name(APP_ID)  # X11 / windows without a matching .desktop file
 
     app.connect("startup", on_startup)
